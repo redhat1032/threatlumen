@@ -1,277 +1,491 @@
-import streamlit as st
-import feedparser
-from datetime import datetime
+import re
+import os
 import time
+import json
+import hashlib
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from typing import List, Dict, Any
 
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="CyberPulse | Real-Time Threat Intel",
-    page_icon="🛡️",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+import requests
+import pandas as pd
+import feedparser
+import streamlit as st
+
+
+# ─────────────────────────────────────────────
+#   ThreatLumen Product Identity
+# ─────────────────────────────────────────────
+SYSTEM_NAME = "ThreatLumen"
+SYSTEM_VERSION = "1.0"
+SYSTEM_TAGLINE = (
+    "Illuminated Threat Intelligence • Unified • Enriched • Triage-Ready"
 )
 
-# --- Custom CSS (Cyberpunk Aesthetic) ---
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto+Mono:wght@400;600&display=swap');
 
-    /* Global Styles */
-    .stApp {
-        background-color: #050505;
-        background-image: radial-gradient(#111 1px, transparent 1px);
-        background-size: 20px 20px;
-        color: #e0e0e0;
-        font-family: 'Roboto Mono', monospace;
-    }
-    
-    h1, h2, h3, h4, h5, h6 {
-        font-family: 'Orbitron', sans-serif;
-        color: #00ffcc; /* Neon Cyan */
-        text-shadow: 0 0 10px rgba(0, 255, 204, 0.7);
-    }
-    
-    a {
-        color: #00ffcc;
-        text-decoration: none;
-        transition: all 0.3s ease;
-    }
-    a:hover {
-        color: #ff00ff; /* Neon Pink */
-        text-shadow: 0 0 8px rgba(255, 0, 255, 0.8);
-    }
+# ─────────────────────────────────────────────
+#   Page Config / Branding
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title=f"{SYSTEM_NAME} | Illuminated Threat Intelligence",
+    page_icon="🔦",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-    /* Card Styling */
-    .news-card {
-        background: rgba(20, 20, 20, 0.8);
-        border: 1px solid #333;
-        border-left: 4px solid #00ffcc;
-        padding: 20px;
-        margin-bottom: 20px;
-        border-radius: 5px;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-        backdrop-filter: blur(5px);
-    }
-    
-    .news-card:hover {
-        transform: translateX(5px);
-        box-shadow: -5px 5px 15px rgba(0, 255, 204, 0.2);
-        border-left-color: #ff00ff;
-    }
 
-    .news-source {
-        font-size: 0.8em;
-        color: #888;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-bottom: 5px;
-    }
-    
-    .news-date {
-        font-size: 0.8em;
-        color: #666;
-        float: right;
-    }
-
-    .news-title {
-        font-size: 1.4em;
-        font-weight: 700;
-        margin: 10px 0;
-        color: #fff;
-    }
-    
-    .news-summary {
-        font-size: 0.95em;
-        color: #ccc;
-        line-height: 1.5;
-        margin-bottom: 15px;
-    }
-
-    /* Sidebar Styling */
-    section[data-testid="stSidebar"] {
-        background-color: #0a0a0a;
-        border-right: 1px solid #333;
-    }
-    
-    /* Search Bar */
-    .stTextInput input {
-        background-color: #111;
-        color: #00ffcc;
-        border: 1px solid #333;
-        font-family: 'Roboto Mono', monospace;
-    }
-    .stTextInput input:focus {
-        border-color: #00ffcc;
-        box-shadow: 0 0 5px rgba(0, 255, 204, 0.5);
-    }
-
-    /* Button Styling */
-    .stButton button {
-        background-color: transparent;
-        border: 1px solid #00ffcc;
-        color: #00ffcc;
-        font-family: 'Orbitron', sans-serif;
-        text-transform: uppercase;
-        transition: all 0.3s;
-    }
-    .stButton button:hover {
-        background-color: #00ffcc;
-        color: #000;
-        box-shadow: 0 0 15px rgba(0, 255, 204, 0.8);
-    }
-    
-    /* Scrollbar */
-    ::-webkit-scrollbar {
-        width: 10px;
-        background: #000;
-    }
-    ::-webkit-scrollbar-thumb {
-        background: #333;
-        border-radius: 5px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-        background: #00ffcc;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# --- Configuration & State ---
-RSS_FEEDS = {
+# ─────────────────────────────────────────────
+#   Feeds + Tagging Config
+# ─────────────────────────────────────────────
+RSS_FEEDS: Dict[str, str] = {
     "The Hacker News": "https://feeds.feedburner.com/TheHackersNews",
     "Krebs on Security": "https://krebsonsecurity.com/feed/",
-    "Dark Reading": "https://www.darkreading.com/rss/all.xml",
     "Bleeping Computer": "https://www.bleepingcomputer.com/feed/",
+    "Dark Reading": "https://www.darkreading.com/rss/all.xml",
     "Threatpost": "https://threatpost.com/feed/",
     "CISA Advisories": "https://www.cisa.gov/cybersecurity-advisories/all.xml",
-    "Schneier on Security": "https://www.schneier.com/feed/atom/"
+    "Schneier on Security": "https://www.schneier.com/feed/atom/",
 }
 
-if 'news_data' not in st.session_state:
-    st.session_state.news_data = []
-if 'saved_articles' not in st.session_state:
-    st.session_state.saved_articles = []
-if 'last_updated' not in st.session_state:
-    st.session_state.last_updated = None
+TAG_KEYWORDS = {
+    "Ransomware": ["ransomware", "lockbit", "encrypt", "extortion"],
+    "Supply Chain": ["supply chain", "dependency", "npm", "pypi", "solarwinds"],
+    "Cloud / IAM": ["aws", "azure", "gcp", "iam", "identity", "entra", "okta"],
+    "Patching Required": ["patch", "update", "zero-day", "0-day", "cisa kev"],
+    "Malware": ["malware", "trojan", "botnet", "infostealer"],
+    "Vulnerabilities": ["cve-", "vulnerability", "remote code", "privilege escalation"],
+}
 
-# --- Helper Functions ---
-def parse_date(entry):
-    """Attempt to parse date from common RSS formats."""
-    if hasattr(entry, 'published_parsed') and entry.published_parsed:
-        return datetime(*entry.published_parsed[:6])
-    elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-        return datetime(*entry.updated_parsed[:6])
-    return datetime.now() # Fallback
+CVE_RE = re.compile(r"(CVE-\d{4}-\d+)", re.IGNORECASE)
 
-def save_article(news_item):
-    """Saves an article to the session state if not duplicate."""
-    if not any(a['link'] == news_item['link'] for a in st.session_state.saved_articles):
-        st.session_state.saved_articles.append(news_item)
-        st.toast(f"Scoped: {news_item['title']} to database.", icon="💾")
-    else:
-        st.toast("Duplicate intel already in database.", icon="⚠️")
 
-def remove_article(link):
-    """Removes an article from saved list."""
-    st.session_state.saved_articles = [a for a in st.session_state.saved_articles if a['link'] != link]
-    st.rerun()
+# ─────────────────────────────────────────────
+#   UI Theme / Cyber-Neon Styling
+# ─────────────────────────────────────────────
+st.markdown(
+    """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto+Mono:wght@400;600&display=swap');
 
-def fetch_feed_data():
-    """Fetches and parses RSS feeds."""
-    all_news = []
-    
-    with st.spinner('Scanning the grid for cached intel...'):
-        progress_bar = st.progress(0)
-        total_feeds = len(RSS_FEEDS)
-        
-        for idx, (source_name, url) in enumerate(RSS_FEEDS.items()):
+.stApp {
+    background-color: #050505;
+    background-image: radial-gradient(#111 1px, transparent 1px);
+    background-size: 22px 22px;
+    color: #e0e0e0;
+    font-family: 'Roboto Mono', monospace;
+}
+
+h1, h2, h3, h4 {
+    font-family: 'Orbitron', sans-serif;
+    color: #00ffcc;
+    text-shadow: 0 0 10px rgba(0,255,204,.7);
+}
+
+a {
+    color:#00ffcc;
+    text-decoration:none;
+}
+a:hover {
+    color:#ff00ff;
+    text-shadow:0 0 8px rgba(255,0,255,.8);
+}
+
+.news-card {
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    background: linear-gradient(135deg, rgba(0,0,0,.95), rgba(10,10,25,.95));
+    border: 1px solid rgba(0,255,204,.25);
+    box-shadow: 0 0 18px rgba(0,255,204,.12);
+}
+
+.news-meta {
+    font-size:0.78rem;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:#888;
+    display:flex;
+    justify-content:space-between;
+}
+
+.news-title {
+    font-size:1.05rem;
+    font-weight:700;
+    margin:6px 0 4px 0;
+    color:#fff;
+}
+
+.news-summary {
+    font-size:0.86rem;
+    color:#c0c0c0;
+}
+
+.pill {
+    display:inline-block;
+    padding:2px 8px;
+    margin-right:4px;
+    margin-top:4px;
+    border-radius:999px;
+    border:1px solid rgba(0,255,204,.4);
+    font-size:.7rem;
+    text-transform:uppercase;
+    letter-spacing:.06em;
+    color:#00ffcc;
+}
+
+.pill-severity-CRITICAL { border-color:#ff0066; color:#ff4d88;}
+.pill-severity-HIGH { border-color:#ff3300; color:#ff704d;}
+.pill-severity-MEDIUM { border-color:#ffaa00; color:#ffcc66;}
+.pill-severity-LOW { border-color:#33cc33; color:#66ff99;}
+
+.footer-text {
+    color:#555;
+    font-size:.72rem;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ─────────────────────────────────────────────
+#   Utility Functions
+# ─────────────────────────────────────────────
+def parse_date(entry: Any) -> datetime:
+    """Parse RSS entry date to a naive UTC datetime."""
+    for key in ("published", "updated", "created"):
+        v = entry.get(key)
+        if v:
             try:
-                feed = feedparser.parse(url)
-                for entry in feed.entries[:10]: # Limit to top 10 per feed
-                    all_news.append({
-                        'source': source_name,
-                        'title': entry.title,
-                        'link': entry.link,
-                        'published': parse_date(entry),
-                        'summary': entry.summary if hasattr(entry, 'summary') else (entry.description if hasattr(entry, 'description') else "No summary available."),
-                    })
-            except Exception as e:
-                st.error(f"Failed to decrypt feed from {source_name}: {e}")
-            
-            progress_bar.progress((idx + 1) / total_feeds)
-            
-    # Sort by newest first
-    all_news.sort(key=lambda x: x['published'], reverse=True)
-    
-    st.session_state.news_data = all_news
-    st.session_state.last_updated = datetime.now()
-    # time.sleep(0.5) # Aesthetic delay
-    progress_bar.empty()
+                d = parsedate_to_datetime(v)
+                # Normalize to UTC and drop tzinfo for consistency
+                return d.astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                continue
+    return datetime(1970, 1, 1)
 
-# --- Main Layout ---
-col1, col2 = st.columns([3, 1])
-with col1:
-    st.title("CYBER // PULSE")
-    st.markdown("### > REAL-TIME THREAT INTELLIGENCE AGGREGATOR")
 
-with col2:
-    st.markdown(f"<div style='text-align: right; padding-top: 20px; color: #00ffcc;'>STATUS: ONLINE<br>{st.session_state.last_updated.strftime('%H:%M:%S') if st.session_state.last_updated else 'OFFLINE'}</div>", unsafe_allow_html=True)
-    if st.button("REFRESH FEED"):
-        fetch_feed_data()
-        st.rerun()
+def label_article(title: str, summary: str) -> List[str]:
+    text = f"{title} {summary}".lower()
+    labels = [
+        tag for tag, kws in TAG_KEYWORDS.items() if any(k in text for k in kws)
+    ]
+    return labels or ["General"]
 
-# --- Sidebar: Saved Intel ---
+
+def extract_cves(text: str) -> List[str]:
+    return sorted(set(match.upper() for match in CVE_RE.findall(text)))
+
+
+@st.cache_data(ttl=3600)
+def enrich_cve(cve_id: str) -> Dict[str, Any]:
+    """Fetch CVSS score/severity from NVD v2 API. Cached to avoid rate limits."""
+    try:
+        r = requests.get(
+            "https://services.nvd.nist.gov/rest/json/cves/2.0",
+            params={"cveId": cve_id},
+            timeout=8,
+        )
+        if not r.ok:
+            return {"id": cve_id}
+        vulns = r.json().get("vulnerabilities", [])
+        if not vulns:
+            return {"id": cve_id}
+
+        metrics = vulns[0]["cve"].get("metrics", {})
+        for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+            if key in metrics:
+                cvss = metrics[key][0].get("cvssData", {})
+                return {
+                    "id": cve_id,
+                    "score": cvss.get("baseScore"),
+                    "severity": cvss.get("baseSeverity"),
+                }
+    except Exception:
+        pass
+    return {"id": cve_id}
+
+
+@st.cache_data(ttl=600)
+def fetch_feeds() -> List[Dict[str, Any]]:
+    """Fetch, normalize, and deduplicate items from all feeds."""
+    items: List[Dict[str, Any]] = []
+    seen = set()
+
+    for source, url in RSS_FEEDS.items():
+        parsed = feedparser.parse(url)
+        for e in getattr(parsed, "entries", []) or []:
+            title = e.get("title", "").strip()
+            link = e.get("link", "").strip()
+            if not (title and link):
+                continue
+
+            uid_src = f"{source}|{title}|{link}"
+            uid = hashlib.md5(uid_src.encode("utf-8")).hexdigest()
+            if uid in seen:
+                continue
+            seen.add(uid)
+
+            summary = e.get("summary", e.get("description", "")).strip()
+            d = parse_date(e)
+
+            item = {
+                "id": uid,
+                "source": source,
+                "title": title,
+                "link": link,
+                "summary": summary,
+                "published": d,
+                "published_str": d.strftime("%Y-%m-%d %H:%M"),
+                "labels": label_article(title, summary),
+            }
+            items.append(item)
+
+    items.sort(key=lambda i: i["published"], reverse=True)
+    return items
+
+
+def add_cve_enrichment(items: List[Dict[str, Any]], limit: int = 40) -> None:
+    """Attach CVE enrichment for the first N items (in-place)."""
+    for idx, i in enumerate(items[:limit]):
+        cves = extract_cves(f"{i['title']} {i['summary']}")
+        i["cves"] = [enrich_cve(c) for c in cves] if cves else []
+
+
+def items_to_dataframe(items: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Convert items into a DataFrame for CSV export."""
+    rows = []
+    for i in items:
+        rows.append(
+            {
+                "published": i.get("published_str", ""),
+                "source": i.get("source", ""),
+                "title": i.get("title", ""),
+                "link": i.get("link", ""),
+                "labels": ", ".join(i.get("labels", [])),
+                "cves": ", ".join(
+                    c["id"] for c in i.get("cves", []) if c.get("id")
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def items_to_markdown(items: List[Dict[str, Any]]) -> str:
+    """Convert items into a Markdown report."""
+    lines = [f"# {SYSTEM_NAME} Export\n"]
+    for i in items:
+        lines.append(f"## {i['title']}")
+        lines.append(f"- **Published:** {i['published_str']}")
+        lines.append(f"- **Source:** {i['source']}")
+        if i.get("labels"):
+            lines.append(f"- **Tags:** {', '.join(i['labels'])}")
+        if i.get("cves"):
+            cve_bits = []
+            for c in i["cves"]:
+                sev = (c.get("severity") or "").upper()
+                score = c.get("score")
+                if sev or score:
+                    cve_bits.append(
+                        f"{c['id']} ({(sev or '').strip()} {(score or '')})".strip()
+                    )
+                else:
+                    cve_bits.append(c["id"])
+            lines.append(f"- **CVEs:** {', '.join(cve_bits)}")
+        lines.append("")
+        lines.append(i["summary"])
+        lines.append("")
+        lines.append(f"[Read more]({i['link']})")
+        lines.append("\n---\n")
+    return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────
+#   Session State
+# ─────────────────────────────────────────────
+if "saved_articles" not in st.session_state:
+    st.session_state.saved_articles = {}
+
+
+# ─────────────────────────────────────────────
+#   Header
+# ─────────────────────────────────────────────
+st.markdown("# ThreatLumen")
+st.caption(SYSTEM_TAGLINE)
+
+
+# ─────────────────────────────────────────────
+#   Sidebar Controls
+# ─────────────────────────────────────────────
 with st.sidebar:
-    st.title("💾 SAVED INTEL")
-    if not st.session_state.saved_articles:
-        st.caption("No artifacts secured.")
-    else:
-        for saved in st.session_state.saved_articles:
-            st.markdown(f"**[{saved['title']}]({saved['link']})**")
-            st.caption(f"Source: {saved['source']}")
-            if st.button("DELETE", key=f"del_{saved['link']}"):
-                remove_article(saved['link'])
-            st.markdown("---")
+    st.markdown("### Controls")
 
-# Initial Load
-if not st.session_state.news_data:
-    fetch_feed_data()
+    sources = st.multiselect(
+        "Sources",
+        list(RSS_FEEDS.keys()),
+        default=list(RSS_FEEDS.keys()),
+    )
 
-# --- Search & Filter ---
+    time_window = st.selectbox(
+        "Time window",
+        ["Last 24 hours", "Last 3 days", "Last 7 days", "All"],
+        index=2,
+    )
+
+    theme_options = ["General"] + list(TAG_KEYWORDS.keys())
+    themes = st.multiselect(
+        "Themes",
+        options=theme_options,
+        default=[],
+    )
+
+    query = st.text_input(
+        "Search",
+        placeholder="CVE-2025-1234, LockBit, Okta, Kubernetes…",
+    )
+
+    show_saved = st.checkbox("Show saved only", value=False)
+
+    enrich = st.checkbox("Enable CVE enrichment", value=True)
+
+
+# ─────────────────────────────────────────────
+#   Data Pipeline
+# ─────────────────────────────────────────────
+items = [i for i in fetch_feeds() if i["source"] in sources]
+
+# Time filter
+if time_window != "All":
+    base = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff_map = {
+        "Last 24 hours": base - timedelta(days=1),
+        "Last 3 days": base - timedelta(days=3),
+        "Last 7 days": base - timedelta(days=7),
+    }
+    cutoff = cutoff_map[time_window]
+    items = [i for i in items if i["published"] >= cutoff]
+
+# Theme filter
+if themes:
+    selected = set(themes)
+    items = [i for i in items if selected.intersection(i["labels"])]
+
+# Search filter
+if query:
+    q = query.lower()
+    items = [
+        i
+        for i in items
+        if q in i["title"].lower()
+        or q in i["summary"].lower()
+        or q in i["source"].lower()
+    ]
+
+# Saved filter
+if show_saved:
+    saved_ids = set(st.session_state.saved_articles.keys())
+    items = [i for i in items if i["id"] in saved_ids]
+
+# CVE enrichment
+if enrich and items:
+    add_cve_enrichment(items)
+else:
+    for i in items:
+        i["cves"] = []
+
+
+# ─────────────────────────────────────────────
+#   Export Controls
+# ─────────────────────────────────────────────
+if items:
+    df = items_to_dataframe(items)
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    md_text = items_to_markdown(items)
+
+    col_csv, col_md = st.columns(2)
+    with col_csv:
+        st.download_button(
+            "⬇️ Export CSV",
+            csv_bytes,
+            file_name="threatlumen_intel.csv",
+            mime="text/csv",
+        )
+    with col_md:
+        st.download_button(
+            "⬇️ Export Markdown",
+            md_text,
+            file_name="threatlumen_intel.md",
+            mime="text/markdown",
+        )
+
 st.markdown("---")
-search_query = st.text_input("", placeholder="> SEARCH DATABASE_")
 
-# --- News Feed Render ---
-count = 0
-for news in st.session_state.news_data:
-    if search_query.lower() in news['title'].lower() or search_query.lower() in news['summary'].lower() or search_query.lower() in news['source'].lower():
-        
-        # Format date
-        date_str = news['published'].strftime("%Y-%m-%d %H:%M")
-        
-        # Clean summary (remove HTML tags if simple)
-        # For this prototype we leave HTML rendered or strip it depending on preference.
-        # Streamlit markdown allows html, so we attempt to render safely or just truncate.
-        summary_text = news['summary'].split('<')[0][:200] + "..." # Naive cleanup for cleaner look
-        
-        st.markdown(f"""
-        <div class="news-card">
-            <div class="news-source">{news['source']} <span class="news-date">[{date_str}]</span></div>
-            <div class="news-title"><a href="{news['link']}" target="_blank">{news['title']}</a></div>
-            <div class="news-summary">{summary_text}</div>
-            <a href="{news['link']}" target="_blank" style="font-size: 0.8em; font-weight: bold; margin-right: 10px;">> READ_FULL_REPORT</a>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Action Buttons
-        if st.button("SAVE DATABASE", key=f"save_{news['link']}"):
-            save_article(news)
-        
-        st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
-        count += 1
-        
-if count == 0:
-    st.info("No intelligence found matching query.")
 
-# --- Footer ---
+# ─────────────────────────────────────────────
+#   Render Items
+# ─────────────────────────────────────────────
+if not items:
+    st.info("No intelligence matched the filters.")
+else:
+    for i in items:
+        st.markdown(
+            f"""
+<div class="news-card">
+  <div class="news-meta">
+    <span>{i['source']}</span>
+    <span>{i['published_str']}</span>
+  </div>
+  <div class="news-title">
+    <a href="{i['link']}" target="_blank" rel="noopener noreferrer">{i['title']}</a>
+  </div>
+  <div class="news-summary">{i['summary']}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+        # Labels / themes
+        if i.get("labels"):
+            st.markdown(
+                " ".join(f"<span class='pill'>{t}</span>" for t in i["labels"]),
+                unsafe_allow_html=True,
+            )
+
+        # CVE pills
+        if i.get("cves"):
+            ctags = []
+            for c in i["cves"]:
+                sev = (c.get("severity") or "").upper()
+                sev_class = f" pill-severity-{sev}" if sev else ""
+                parts = [c["id"]]
+                if c.get("score") is not None:
+                    parts.append(str(c["score"]))
+                if sev:
+                    parts.append(sev)
+                label = " • ".join(parts)
+                ctags.append(f"<span class='pill{sev_class}'>{label}</span>")
+            st.markdown("".join(ctags), unsafe_allow_html=True)
+
+        # Save / Unsave
+        col_btn, _ = st.columns([1, 4])
+        with col_btn:
+            if i["id"] in st.session_state.saved_articles:
+                if st.button("★ Saved", key=f"unsave_{i['id']}"):
+                    st.session_state.saved_articles.pop(i["id"], None)
+                    st.experimental_rerun()
+            else:
+                if st.button("☆ Save", key=f"save_{i['id']}"):
+                    st.session_state.saved_articles[i["id"]] = i
+                    st.experimental_rerun()
+
+        st.markdown("<br/>", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────
+#   Footer
+# ─────────────────────────────────────────────
 st.markdown("---")
-st.markdown("<center><span style='color: #444;'>SYSTEM_VERSION: 1.0.0 | ENCRYPTED CONNECTION</span></center>", unsafe_allow_html=True)
+st.markdown(
+    f"<center class='footer-text'>{SYSTEM_NAME} {SYSTEM_VERSION} • Illuminated Intel</center>",
+    unsafe_allow_html=True,
+)
