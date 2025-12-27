@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.log
+*.sqlite3
+
+# Environments
+.env
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+
+# Streamlit
+.streamlit/
+saved_articles.json
+
+# OS crap
+.DS_Store
