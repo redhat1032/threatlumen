@@ -1,7 +1,4 @@
 import re
-import os
-import time
-import json
 import hashlib
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -67,70 +64,167 @@ st.markdown(
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto+Mono:wght@400;600&display=swap');
 
+:root {
+    --bg: #020509;
+    --bg-elevated: #050a12;
+    --card: #050a12;
+    --border-soft: rgba(255,255,255,0.06);
+    --accent: #1ce0ff;
+    --accent-soft: rgba(28,224,255,0.18);
+    --accent-strong: rgba(28,224,255,0.35);
+    --text-main: #f9fbff;
+    --text-muted: #8f9bb5;
+    --line: rgba(255,255,255,0.06);
+}
+
 .stApp {
-    background-color: #050505;
-    background-image: radial-gradient(#111 1px, transparent 1px);
-    background-size: 22px 22px;
-    color: #e0e0e0;
+    background: radial-gradient(circle at top, #07101d 0, #020508 40%, #000000 100%);
+    color: var(--text-main);
     font-family: 'Roboto Mono', monospace;
 }
 
+/* Headings */
 h1, h2, h3, h4 {
     font-family: 'Orbitron', sans-serif;
-    color: #00ffcc;
-    text-shadow: 0 0 10px rgba(0,255,204,.7);
+    color: var(--text-main);
 }
 
-a {
-    color:#00ffcc;
-    text-decoration:none;
-}
-a:hover {
-    color:#ff00ff;
-    text-shadow:0 0 8px rgba(255,0,255,.8);
+/* TL header shell */
+.tl-shell {
+    max-width: 1120px;
+    margin: 0 auto 1.5rem auto;
+    padding: 18px 22px 18px 22px;
+    border-radius: 26px;
+    background: radial-gradient(circle at top left, rgba(45,103,255,0.35), transparent 55%),
+                linear-gradient(135deg, rgba(3,8,18,0.95), rgba(3,10,22,0.98));
+    border: 1px solid var(--border-soft);
+    box-shadow:
+        0 0 40px rgba(0,0,0,0.8),
+        0 0 60px rgba(28,224,255,0.18);
 }
 
+.tl-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.tl-title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.tl-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.tl-subtitle {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+}
+
+.tl-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border-soft);
+    background: rgba(3,9,18,0.9);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    text-decoration: none;
+    backdrop-filter: blur(12px);
+}
+
+.tl-nav-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* TL meta row */
+.tl-meta-row {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.tl-pill {
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:4px 10px;
+    border-radius:999px;
+    border:1px solid var(--accent-strong);
+    background: var(--accent-soft);
+    font-size:0.72rem;
+    text-transform:uppercase;
+    letter-spacing:0.14em;
+    color: var(--accent);
+}
+
+.tl-meta-text {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* News cards */
 .news-card {
-    border-radius: 12px;
+    border-radius: 18px;
     padding: 14px 16px;
     margin-bottom: 12px;
-    background: linear-gradient(135deg, rgba(0,0,0,.95), rgba(10,10,25,.95));
-    border: 1px solid rgba(0,255,204,.25);
-    box-shadow: 0 0 18px rgba(0,255,204,.12);
+    background: linear-gradient(135deg, rgba(3,8,16,0.96), rgba(3,12,26,0.98));
+    border: 1px solid var(--border-soft);
+    box-shadow: 0 0 24px rgba(0,0,0,0.7);
 }
 
 .news-meta {
     font-size:0.78rem;
     text-transform:uppercase;
     letter-spacing:0.08em;
-    color:#888;
+    color:#7c88a0;
     display:flex;
     justify-content:space-between;
 }
 
 .news-title {
-    font-size:1.05rem;
-    font-weight:700;
+    font-size:1.02rem;
+    font-weight:600;
     margin:6px 0 4px 0;
-    color:#fff;
+    color:#f4f7ff;
 }
 
 .news-summary {
     font-size:0.86rem;
-    color:#c0c0c0;
+    color:#c0c7d6;
 }
 
+/* Pills */
 .pill {
     display:inline-block;
     padding:2px 8px;
     margin-right:4px;
     margin-top:4px;
     border-radius:999px;
-    border:1px solid rgba(0,255,204,.4);
+    border:1px solid rgba(124,136,160,0.6);
     font-size:.7rem;
     text-transform:uppercase;
     letter-spacing:.06em;
-    color:#00ffcc;
+    color:#a7b4d0;
 }
 
 .pill-severity-CRITICAL { border-color:#ff0066; color:#ff4d88;}
@@ -158,7 +252,6 @@ def parse_date(entry: Any) -> datetime:
         if v:
             try:
                 d = parsedate_to_datetime(v)
-                # Normalize to UTC and drop tzinfo for consistency
                 return d.astimezone(timezone.utc).replace(tzinfo=None)
             except Exception:
                 continue
@@ -308,10 +401,32 @@ if "saved_articles" not in st.session_state:
 
 
 # ─────────────────────────────────────────────
-#   Header
+#   Header (styled to match douglasweant.com)
 # ─────────────────────────────────────────────
-st.markdown("# ThreatLumen")
-st.caption(SYSTEM_TAGLINE)
+st.markdown(
+    f"""
+<div class="tl-shell">
+  <div class="tl-header-row">
+    <div class="tl-title-block">
+      <div class="tl-subtitle">Live tool</div>
+      <div class="tl-title">{SYSTEM_NAME}</div>
+    </div>
+    <div>
+      <a class="tl-nav-btn" href="https://douglasweant.com" target="_self">
+        ← Back to douglasweant.com
+      </a>
+    </div>
+  </div>
+  <div class="tl-meta-row">
+    <div class="tl-pill">Threat Intel</div>
+    <div class="tl-meta-text">
+      A live threat intelligence dashboard I use for daily situational awareness.
+    </div>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 
 # ─────────────────────────────────────────────
