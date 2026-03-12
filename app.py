@@ -272,6 +272,19 @@ h1, h2, h3, h4 {
 .feed-health-fail { color: #ff704d; font-size: 0.75rem; }
 
 .footer-text { color: #555; font-size: .72rem; }
+.stDownloadButton > button {
+    background: rgba(3, 9, 18, 0.9) !important;
+    color: var(--text-main) !important;
+    border: 1px solid var(--border-soft) !important;
+    border-radius: 14px !important;
+    font-family: 'Roboto Mono', monospace !important;
+}
+
+.stDownloadButton > button:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    background: rgba(28, 224, 255, 0.06) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
